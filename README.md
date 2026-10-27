@@ -57,7 +57,13 @@ python3 build_mac.py
   ```bash
   xattr -cr ~/Desktop/AppCrashLogTool.app
   ```
+  > **注意**：执行后终端没有任何输出是正常的，说明命令已成功。
 - 然后重新双击打开即可
+
+**如果还是不行，用下面这个更强的命令（需要输入 Mac 密码）：**
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/AppCrashLogTool.app
+```
 
 ## 开发者本地
 
