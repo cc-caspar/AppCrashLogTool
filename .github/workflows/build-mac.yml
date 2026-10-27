@@ -1,0 +1,70 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download Android platform-tools (macOS)
+        run: |
+          rm -rf platform-tools
+          curl -L -o platform-tools.zip "https://dl.google.com/android/repository/platform-tools-latest-darwin.zip"
+          unzip -o platform-tools.zip -d .
+          # 解压后就是 platform-tools/
+          ls -la platform-tools/
+
+      - name: Verify adb
+        run: |
+          ls -la platform-tools/
+          file platform-tools/adb
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller>=6.0.0
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller --noconfirm --clean build_mac.spec
+
+      - name: Bundle resources into .app
+        run: |
+          APP_MACOS="dist/AppCrashLogTool.app/Contents/MacOS"
+          mkdir -p "$APP_MACOS/platform-tools"
+          cp -R platform-tools/* "$APP_MACOS/platform-tools/"
+          cp config.json "$APP_MACOS/"
+          cp "使用说明.txt" "$APP_MACOS/" 2>/dev/null || true
+          mkdir -p "$APP_MACOS/output-logs"
+          chmod +x "$APP_MACOS/platform-tools/adb"
+          ls -la "$APP_MACOS/platform-tools/"
+
+      - name: Create zip for distribution
+        run: |
+          cd dist
+          zip -r AppCrashLogTool-macOS.zip AppCrashLogTool.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppCrashLogTool-macOS
+          path: dist/AppCrashLogTool-macOS.zip
+
+      - name: Upload to Release (if tagged)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/AppCrashLogTool-macOS.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
