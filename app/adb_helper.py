@@ -579,3 +579,77 @@ class AdbHelper:
         if text.isdigit():
             return text
         return None
+
+    def list_installed_apps(
+        self, serial: str, include_system: bool = False
+    ) -> List[Tuple[str, str, str]]:
+        """返回已安装应用列表，每个元素: (package_name, app_label, app_type)"""
+        user_pkgs = self._parse_packages(serial, ["pm", "list", "packages", "-3", "-f"])
+        all_pkgs = user_pkgs[:]
+        if include_system:
+            sys_pkgs = self._parse_packages(serial, ["pm", "list", "packages", "-s", "-f"])
+            all_pkgs.extend(sys_pkgs)
+
+        result: List[Tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for pkg, _apk, app_type in all_pkgs:
+            if pkg in seen:
+                continue
+            seen.add(pkg)
+            label = self.get_app_label(serial, pkg)
+            result.append((pkg, label or pkg, app_type))
+        return result
+
+    def _parse_packages(
+        self, serial: str, args: List[str]
+    ) -> List[Tuple[str, str, str]]:
+        """解析 pm list packages 输出，返回 [(pkg, apk_path, type)]"""
+        apps: List[Tuple[str, str, str]] = []
+        try:
+            result = self._run(args, timeout=20)
+            for line in (result.stdout or "").splitlines():
+                line = line.strip()
+                if not line.startswith("package:"):
+                    continue
+                # 格式: package:/path/to/apk=com.example
+                parts = line.split("=", 1)
+                if len(parts) != 2:
+                    continue
+                apk_path = parts[0].replace("package:", "")
+                pkg = parts[1]
+                app_type = "user" if "-3" in args else "system"
+                apps.append((pkg, apk_path, app_type))
+        except Exception:
+            pass
+        return apps
+
+    def get_app_label(self, serial: str, package: str) -> str:
+        """获取应用显示名称，失败返回空字符串"""
+        try:
+            text = self._shell_text(serial, f"pm dump {package}", timeout=10)
+            # 尝试多种模式匹配应用名
+            for pattern in [
+                r"nonLocalizedLabel=([^\\n]+)",
+                r"labelRes=\\S+\\s+label=([^\\n]+)",
+            ]:
+                match = re.search(pattern, text)
+                if match:
+                    return match.group(1).strip()
+        except Exception:
+            pass
+        return ""
+
+    def uninstall_app(self, serial: str, package: str) -> Tuple[bool, str]:
+        """卸载应用，返回 (是否成功, 消息)"""
+        try:
+            result = self._run(
+                ["-s", serial, "uninstall", package], timeout=120
+            )
+            output = self._output(result)
+            if result.returncode == 0 and "Success" in output:
+                return True, "卸载成功"
+            if "DELETE_FAILED" in output:
+                return False, f"卸载失败: {output}"
+            return False, f"卸载失败: {output}"
+        except Exception as exc:
+            return False, f"卸载失败: {exc}"

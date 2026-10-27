@@ -120,6 +120,11 @@ class CrashLogApp(tk.Tk):
         )
         self.install_btn.pack(side="left", padx=(12, 0))
 
+        self.uninstall_btn = self._action_button(
+            device_row, "卸载应用", "#E5E7EB", "#111827", self.uninstall_app
+        )
+        self.uninstall_btn.pack(side="left", padx=(12, 0))
+
         self.dev_btn = self._action_button(
             device_row, "打开开发者选项", "#E5E7EB", "#111827", self.open_developer_options
         )
@@ -169,6 +174,7 @@ class CrashLogApp(tk.Tk):
 
         self.view_btn.configure(state="disabled")
         self.install_btn.configure(state="disabled")
+        self.uninstall_btn.configure(state="disabled")
         self.dev_btn.configure(state="disabled")
 
         tip = tk.Frame(self, bg="#FFFFFF", highlightbackground="#E5E7EB", highlightthickness=1)
@@ -278,7 +284,7 @@ class CrashLogApp(tk.Tk):
 
     def _set_connected_actions(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
-        for btn in (self.view_btn, self.install_btn, self.dev_btn, self.start_btn, self.dump_btn):
+        for btn in (self.view_btn, self.install_btn, self.uninstall_btn, self.dev_btn, self.start_btn, self.dump_btn):
             btn.configure(state=state)
 
     def _schedule_poll(self) -> None:
@@ -558,6 +564,172 @@ class CrashLogApp(tk.Tk):
             messagebox.showinfo("安装完成", f"{name}\n\n{message}")
         else:
             messagebox.showerror("安装失败", message)
+
+    def uninstall_app(self) -> None:
+        serial = self._require_device("还不能卸载")
+        if not serial:
+            return
+        if self.capturing or self.busy:
+            return
+
+        self.busy = True
+        self._set_connected_actions(False)
+        self.reconnect_btn.configure(state="disabled")
+        self.refresh_btn.configure(state="disabled")
+        self.result_var.set("")
+        self.tip_var.set("正在读取已安装应用列表...")
+
+        def worker() -> None:
+            try:
+                apps = self.adb.list_installed_apps(serial, include_system=False)
+            except Exception as exc:
+                apps = []
+                self.after(0, lambda: self._on_uninstall_list_done([], str(exc)))
+                return
+            self.after(0, lambda: self._on_uninstall_list_done(apps, ""))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_uninstall_list_done(self, apps: list, err: str) -> None:
+        self.busy = False
+        self.reconnect_btn.configure(state="normal")
+        self.refresh_btn.configure(state="normal")
+        self.refresh_status(silent=True)
+
+        if err:
+            self.tip_var.set(f"读取应用列表失败：{err}")
+            return
+
+        if not apps:
+            self.tip_var.set("没有读取到已安装的第三方应用。")
+            messagebox.showinfo("卸载应用", "没有读取到已安装的第三方应用。")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("卸载应用")
+        win.geometry("560x480")
+        win.minsize(480, 360)
+        win.configure(bg="#FFFFFF")
+        win.transient(self)
+
+        tk.Label(
+            win,
+            text="选择要卸载的应用",
+            font=("Microsoft YaHei UI", 14, "bold"),
+            bg="#FFFFFF",
+            fg="#111827",
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=(16, 8))
+
+        search_frame = tk.Frame(win, bg="#FFFFFF")
+        search_frame.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(search_frame, text="搜索：", bg="#FFFFFF", font=("Microsoft YaHei UI", 11)).pack(side="left")
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(search_frame, textvariable=search_var, font=("Microsoft YaHei UI", 11))
+        search_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        tree_frame = tk.Frame(win, bg="#FFFFFF")
+        tree_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+
+        columns = ("app_name", "package_name")
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
+        tree.heading("app_name", text="应用名")
+        tree.heading("package_name", text="包名")
+        tree.column("app_name", width=200)
+        tree.column("package_name", width=300)
+        tree.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        all_apps = apps[:]
+        for pkg, label, _app_type in apps:
+            display = label if label != pkg else pkg
+            tree.insert("", "end", values=(display, pkg))
+
+        def filter_apps(*_args) -> None:
+            keyword = search_var.get().strip().lower()
+            for item in tree.get_children():
+                tree.delete(item)
+            for pkg, label, _app_type in all_apps:
+                display = label if label != pkg else pkg
+                if not keyword or keyword in display.lower() or keyword in pkg.lower():
+                    tree.insert("", "end", values=(display, pkg))
+
+        search_var.trace_add("write", filter_apps)
+
+        btn_frame = tk.Frame(win, bg="#FFFFFF")
+        btn_frame.pack(fill="x", padx=16, pady=(0, 16))
+
+        def do_uninstall() -> None:
+            selected = tree.selection()
+            if not selected:
+                messagebox.showwarning("没有选择", "请先在列表中选择要卸载的应用。")
+                return
+            item = tree.item(selected[0])
+            pkg = item["values"][1]
+            display_name = item["values"][0]
+            if not messagebox.askyesno("确认卸载", f"确定要卸载 {display_name} 吗？\n\n包名：{pkg}"):
+                return
+            win.destroy()
+            self._do_uninstall(pkg, display_name)
+
+        tk.Button(
+            btn_frame,
+            text="卸载选中应用",
+            font=("Microsoft YaHei UI", 11, "bold"),
+            bg="#DC2626",
+            fg="white",
+            relief="flat",
+            padx=14,
+            pady=6,
+            command=do_uninstall,
+        ).pack(side="left")
+
+        tk.Button(
+            btn_frame,
+            text="关闭",
+            font=("Microsoft YaHei UI", 11),
+            bg="#E5E7EB",
+            fg="#111827",
+            relief="flat",
+            padx=14,
+            pady=6,
+            command=win.destroy,
+        ).pack(side="right")
+
+    def _do_uninstall(self, package: str, display_name: str) -> None:
+        serial = self.current_serial
+        if not serial:
+            return
+        self.busy = True
+        self._set_connected_actions(False)
+        self.reconnect_btn.configure(state="disabled")
+        self.refresh_btn.configure(state="disabled")
+        self.result_var.set("")
+        self.tip_var.set(f"正在卸载 {display_name}...")
+
+        def worker() -> None:
+            try:
+                ok, message = self.adb.uninstall_app(serial, package)
+            except Exception as exc:
+                ok, message = False, f"卸载失败：{exc}"
+            self.after(0, lambda: self._on_uninstall_done(ok, message, display_name))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_uninstall_done(self, ok: bool, message: str, display_name: str) -> None:
+        self.busy = False
+        self.reconnect_btn.configure(state="normal")
+        self.refresh_btn.configure(state="normal")
+        self.refresh_status(silent=True)
+        self.tip_var.set(message)
+        self.result_var.set(display_name)
+        if ok:
+            messagebox.showinfo("卸载完成", f"{display_name}\n\n{message}")
+        else:
+            messagebox.showerror("卸载失败", message)
 
     def open_developer_options(self) -> None:
         serial = self._require_device("还不能打开")
