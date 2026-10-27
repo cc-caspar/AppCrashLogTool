@@ -25,6 +25,10 @@
 3. 点击右上角 **Run workflow → Run workflow**
 4. 等待约 3~5 分钟，打包完成后在页面下方 **Artifacts** 区域下载 `AppCrashLogTool-macOS`
 
+> **Artifacts 下载后怎么用？**
+> - 下载的 zip 解压后就是 `AppCrashLogTool.app`（不需要再解压）
+> - 把 `AppCrashLogTool.app` 拖到「应用程序」文件夹，或者双击直接运行
+
 ### 本地打包（需要 Mac）
 
 ```bash
@@ -38,11 +42,22 @@ python3 build_mac.py
 
 ### Mac 首次运行注意事项
 
-- 提示**"无法验证开发者"**时，右键点击 `AppCrashLogTool.app` → **打开**
-- 如果还是打不开，在终端执行：
+由于应用没有苹果开发者签名，macOS 可能会阻止运行。
+
+**情况 1：提示"无法验证开发者"**
+- 右键点击 `AppCrashLogTool.app` → **打开**
+- 在弹出的提示里选择**"打开"**
+
+**情况 2：提示"已损坏，无法打开"（如下图所示）**
+- 打开终端（Terminal），执行：
   ```bash
-  xattr -cr AppCrashLogTool.app
+  xattr -cr /Applications/AppCrashLogTool.app
   ```
+  或者如果你把 app 放在桌面：
+  ```bash
+  xattr -cr ~/Desktop/AppCrashLogTool.app
+  ```
+- 然后重新双击打开即可
 
 ## 开发者本地
 
